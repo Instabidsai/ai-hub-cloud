@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-securepass}@postgres:5432/openwebui
+      - REDIS_URL=redis://redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - WEBUI_AUTH=true
+      - WEBUI_NAME=InstaBids AI Hub
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-instabids-secret-2024}
+      - ENV=dev
+      - ENABLE_API_KEY=true
+      - ENABLE_RAG=true
+      - ENABLE_WEB_SEARCH=true
+    volumes:
+      - open-webui-data:/app/backend/data
+      - ./company-docs:/app/backend/data/docs:ro
+    networks:
+      - internal
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mcp-server:
+    build: ./mcp-server
+    container_name: mcp-server
+    environment:
+      - OPENWEBUI_URL=http://open-webui:8080
+      - OPENWEBUI_API_KEY=${MCP_API_KEY:-internal-mcp-key}
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-mcp-jwt-secret}
+      - PORT=8888
+    ports:
+      - "8888:8888"
+    networks:
+      - internal
+    depends_on:
+      - open-webui
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-securepass}
+      - POSTGRES_DB=openwebui
+      - POSTGRES_USER=postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./certs:/etc/nginx/certs
+    networks:
+      - internal
+      - external
+    depends_on:
+      - open-webui
+      - mcp-server
+
+volumes:
+  open-webui-data:
+  redis-data:
+  postgres-data:
+
+networks:
+  internal:
+  external:
